@@ -1,0 +1,16 @@
+name: nn-dev
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python >= 3.10
+  - pip
+  - opencv
+  - pillow
+  - numpy
+  - pandas
+  - scipy
+
+  - pip:
+    - -r nn-torch-requirements.txt
