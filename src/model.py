@@ -2,88 +2,141 @@
 Neural network model
 """
 
-from typing import Dict, List, Tuple
-
+from typing import Any, List
+import torch
 from torch import nn
 
 
-class EmptyLayer(nn.Module):
-    """Placeholder layer, no operations yet"""
-    def __init__(self):
-        super(EmptyLayer, self).__init__()
+class CNNBlock(nn.Module):
+    """Convolutional + BatchNormalization + LeakyReLU block"""
 
-class DetectionLayer(nn.Module):
-    """Placeholder layer, no operations yet"""
-    def __init__(self, anchors: List[Tuple]) -> None:
-        super(DetectionLayer, self).__init__()
-        if not isinstance(anchors, list):
-            raise TypeError(f"anchors option must be a list, got {type(anchors)}")
-        self.anchors = anchors
+    def __init__(
+        self, in_channels: int, out_channels: int, use_batch_norm: bool = True, **kwargs
+    ) -> None:
+        super().__init__()
+        self.conv2d = nn.Conv2d(
+            in_channels, out_channels, bias=(not use_batch_norm), **kwargs
+        )
+        self.bn2d = nn.BatchNorm2d(out_channels)
+        self.act = nn.LeakyReLU(0.1)
+        self.use_batch_norm = use_batch_norm
 
-    def extra_repr(self):
-        """Print extra parameters of the custom module"""
-        return f"anchors = {self.anchors}"
+    def forward(self, x) -> Any:
+        x = self.conv2d(x)
+        if self.use_batch_norm:
+            x = self.bn2d(x)
+            return self.act(x)
+        else:
+            return x
+
+
+class ResidualBlock(nn.Module):
+    """Residual block"""
+
+    def __init__(
+        self, channels, use_residual: bool = True, num_repetitions: int = 1
+    ) -> None:
+        super().__init__()
+        res_layers = []
+        for _ in range(num_repetitions):
+            res_layers += [
+                nn.Sequential(
+                    nn.Conv2d(channels, channels // 2, kernel_size=1),
+                    nn.BatchNorm2d(channels // 2),
+                    nn.LeakyReLU(0.1),
+                    nn.Conv2d(channels // 2, channels, kernel_size=3, padding=1),
+                    nn.BatchNorm2d(channels),
+                    nn.LeakyReLU(0.1),
+                )
+            ]
+        self.layers = nn.ModuleList(res_layers)
+        self.use_residual = use_residual
+        self.num_repetitions = num_repetitions
+
+    def forward(self, x) -> Any:
+        for layer in self.layers:
+            residual = x
+            x = layer(x)
+            if self.use_residual:
+                x = x + residual
+        return x
+
+
+class ScalePrediction(nn.Module):
+    """ScalePrediction block"""
+
+    def __init__(self, in_channels: int, num_classes: int) -> None:
+        super().__init__()
+        self.pred = nn.Sequential(
+            nn.Conv2d(in_channels, 2 * in_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(2 * in_channels),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(2 * in_channels, (num_classes + 5) * 3, kernel_size=1),
+        )
+        self.num_classes = num_classes
+
+    # desired output format: (batch_size, 3, grid_size, grid_size, num_classes + 5)
+    def forward(self, x) -> Any:
+        output = self.pred(x)
+        output = output.view(x.size(0), 3, self.num_classes + 5, x.size(2), x.size(3))
+        output = output.permute(0, 1, 3, 4, 2)
+        return output
+
 
 class YOLOv3(nn.Module):
-    """YOLOv3 neural network
+    """YOLOv3 neural network architecture"""
 
-    Parameters
-    ----------
-    configs : `dict`
-        Dictionary with configs for each layer of the YOLOv3 model
-    """
+    def __init__(self, in_channels: int, num_classes: int, *args, **kwargs) -> None:
+        super(YOLOv3, self).__init__(*args, **kwargs)
+        self.in_channels = in_channels
+        self.num_classes = num_classes
+        # hardcode layers, for now
+        self.layers = nn.ModuleList(
+            [
+                CNNBlock(in_channels, 32, kernel_size=3, stride=1, padding=1),
+                CNNBlock(32, 64, kernel_size=3, stride=2, padding=1),
+                ResidualBlock(64, num_repetitions=1),
+                CNNBlock(64, 128, kernel_size=3, stride=2, padding=1),
+                ResidualBlock(128, num_repetitions=2),
+                CNNBlock(128, 256, kernel_size=3, stride=2, padding=1),
+                ResidualBlock(256, num_repetitions=8),
+                CNNBlock(256, 512, kernel_size=3, stride=2, padding=1),
+                ResidualBlock(512, num_repetitions=8),
+                CNNBlock(512, 1024, kernel_size=3, stride=2, padding=1),
+                ResidualBlock(1024, num_repetitions=4),
+                CNNBlock(1024, 512, kernel_size=1, stride=1, padding=0),
+                CNNBlock(512, 1024, kernel_size=3, stride=1, padding=1),
+                ResidualBlock(1024, use_residual=False, num_repetitions=1),
+                CNNBlock(1024, 512, kernel_size=1, stride=1, padding=0),
+                ScalePrediction(512, num_classes=num_classes),
+                CNNBlock(512, 256, kernel_size=1, stride=1, padding=0),
+                nn.Upsample(scale_factor=2),
+                CNNBlock(768, 256, kernel_size=1, stride=1, padding=0),
+                CNNBlock(256, 512, kernel_size=3, stride=1, padding=1),
+                ResidualBlock(512, use_residual=False, num_repetitions=1),
+                CNNBlock(512, 256, kernel_size=1, stride=1, padding=0),
+                ScalePrediction(256, num_classes=num_classes),
+                CNNBlock(256, 128, kernel_size=1, stride=1, padding=0),
+                nn.Upsample(scale_factor=2),
+                CNNBlock(384, 128, kernel_size=1, stride=1, padding=0),
+                CNNBlock(128, 256, kernel_size=3, stride=1, padding=1),
+                ResidualBlock(256, use_residual=False, num_repetitions=1),
+                CNNBlock(256, 128, kernel_size=1, stride=1, padding=0),
+                ScalePrediction(128, num_classes=num_classes),
+            ]
+        )
 
-    def __init__(self, configs: Dict = dict()) -> None:
-        super(YOLOv3, self).__init__()
-        self.configs = configs
-
-        # save global opts in this dict
-        self.net_info = None
-
-        # create layers in YOLO as a nn.Sequential
-        _layers = nn.Sequential()
-        for k, lname in enumerate(self.configs.keys()):
-            layer_opts = self.configs[lname]
-            if lname == "global":
-                self.net_info = self.configs[lname]
+    def forward(self, x) -> List:
+        outputs = []
+        route_connections = []
+        for layer in self.layers:
+            if isinstance(layer, ScalePrediction):
+                outputs.append(layer(x))
                 continue
-            for ltype in layer_opts.keys():
-                lyr = None
-                name = ""
-                if ltype == "Conv2d":
-                    name = f"conv_{k}"
-                    lyr = nn.Conv2d(**layer_opts[ltype])
-                    # module.add_module("conv_{0}".format(index), conv)
-                elif ltype == "BatchNorm2d":
-                    name = f"bn_{k}"
-                    lyr = nn.BatchNorm2d(**layer_opts[ltype])
-                elif ltype == "Activation":
-                    name = f"leaky_{k}"
-                    fn_name = layer_opts[ltype]["fn"]
-                    if fn_name == "leaky":
-                        lyr = nn.LeakyReLU(
-                            negative_slope=layer_opts[ltype]["negative_slope"],
-                            inplace=layer_opts[ltype]["inplace"],
-                        )
-                elif ltype == "Upsample":
-                    name = f"upsample_{k}"
-                    lyr = nn.Upsample(**layer_opts[ltype])
-                elif ltype == "Route":
-                    name = f"route_{k}"
-                    lyr = EmptyLayer()
-                elif ltype == "Shortcut":
-                    name = f"shortcut_{k}"
-                    lyr = EmptyLayer()
-                elif ltype == "YOLO":
-                    name = f"detection_{k}"
-                    lyr = DetectionLayer(**layer_opts[ltype])
-                else:
-                    raise ValueError(f"unknown layer for YOLO structure: {ltype}")
-
-                if lyr is not None: 
-                    _layers.add_module(name, lyr)
-
-        self.layers = _layers
-
-    def forward(self, x):
-        pass
+            x = layer(x)
+            if isinstance(layer, ResidualBlock) and layer.num_repetitions == 8:
+                route_connections.append(x)
+            elif isinstance(layer, nn.Upsample):
+                x = torch.cat([x, route_connections[-1]], dim=1)
+                route_connections.pop()
+        return outputs
