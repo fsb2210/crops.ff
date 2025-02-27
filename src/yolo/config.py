@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Union
 
 
-class YOLOv3Cfg():
+class YOLOv3Cfg:
     """Config object for YOLO neural network
 
     Parameters
@@ -14,6 +14,7 @@ class YOLOv3Cfg():
     fname : `str / Path`
         Filename with config of YOLO network
     """
+
     def __init__(self, fname: Union[str, Path] = "") -> None:
         self.fname = fname
         self.opts: dict = dict()
@@ -21,18 +22,16 @@ class YOLOv3Cfg():
         self._block_generator(blocks=_blocks)
 
     def parse_file(self) -> List:
-        """Parses config file from YOLO darknet network into a list
-        """
+        """Parses config file from YOLO darknet network into a list"""
 
         if self.fname == "" or self.fname is None:
             raise ValueError(f"unknown cfg filename: {self.fname}")
-
 
         # load cfg file
         file = open(str(self.fname), "r")
         lines = file.read().split("\n")
         lines = [x for x in lines if len(x) > 0]
-        lines = [x for x in lines if x[0] != '#']
+        lines = [x for x in lines if x[0] != "#"]
         lines = [x.rstrip().lstrip() for x in lines]
 
         # return a list with block configs
@@ -43,9 +42,9 @@ class YOLOv3Cfg():
                 if len(block) != 0:
                     blocks.append(block)
                     block = {}
-                block["type"] = line[1:-1].rstrip()     
+                block["type"] = line[1:-1].rstrip()
             else:
-                key,value = line.split("=") 
+                key, value = line.split("=")
                 block[key.rstrip()] = value.lstrip()
         blocks.append(block)
 
@@ -61,7 +60,9 @@ class YOLOv3Cfg():
         """
 
         if len(blocks) <= 0:
-            raise ValueError("got an unknown block for generating YOLO architecture configuration")
+            raise ValueError(
+                "got an unknown block for generating YOLO architecture configuration"
+            )
 
         # controls in_channels of Conv2d layers
         prev_filters = 3
@@ -85,7 +86,7 @@ class YOLOv3Cfg():
                 except Exception:
                     batchnorm = 0
                     bias = True
-            
+
                 # this are options for a conv layer
                 filters = int(blk["filters"])
                 padding = int(blk["pad"])
@@ -128,7 +129,7 @@ class YOLOv3Cfg():
                 }
 
             elif blk["type"] == "route":
-                blk["layers"] = blk["layers"].split(',')
+                blk["layers"] = blk["layers"].split(",")
                 # start  of a route
                 start = int(blk["layers"][0])
                 # end, if there exists one.
@@ -137,7 +138,7 @@ class YOLOv3Cfg():
                 except Exception:
                     end = 0
                 # positive anotation
-                if start > 0: 
+                if start > 0:
                     start = start - k
                 if end > 0:
                     end = end - k
@@ -162,7 +163,9 @@ class YOLOv3Cfg():
 
                 anchors = blk["anchors"].split(",")
                 anchors = [int(a) for a in anchors]
-                anchors = [(anchors[i], anchors[i+1]) for i in range(0, len(anchors),2)]
+                anchors = [
+                    (anchors[i], anchors[i + 1]) for i in range(0, len(anchors), 2)
+                ]
                 anchors = [anchors[i] for i in mask]
 
                 nn_info[f"layer_{k}"]["YOLO"] = {
