@@ -23,8 +23,7 @@ def convert_to_yolo(
     image_width: int,
     image_height: int,
 ) -> Tuple[float, float, float, float]:
-    """Convert format to YOLO
-    """
+    """Convert format to YOLO"""
     # calculate box width and height
     width = xmax - xmin
     height = ymax - ymin
@@ -38,20 +37,23 @@ def convert_to_yolo(
     height = image_height
     return x_center, y_center, width, height
 
+
 def _get_categories(df: pd.DataFrame) -> Dict[str, int]:
-    """Create dictionary for class -> index equivalence
-    """
+    """Create dictionary for class -> index equivalence"""
     classes = df["class"]
     keys = list(set(classes))
     class2id = dict(zip((keys), range(len(keys))))
     return class2id
 
-def annotate_dataset(opt: argparse.Namespace, df: pd.DataFrame, ds_id: str, classes_dict: dict) -> None:
-    """Annotate dataset and save annotations to new database
-    """
+
+def annotate_dataset(
+    opt: argparse.Namespace, df: pd.DataFrame, ds_id: str, classes_dict: dict
+) -> None:
+    """Annotate dataset and save annotations to new database"""
     # loop over elements in the datase.txtt
     for k, fname in enumerate(df["filename"]):
-        if not opt.verbose: print(f"\r- annotating {k}/{df.shape[0]}", end=" ")
+        if not opt.verbose:
+            print(f"\r- annotating {k}/{df.shape[0]}", end=" ")
 
         row = df.iloc[k]
         rclass = classes_dict[row["class"]]
@@ -64,21 +66,29 @@ def annotate_dataset(opt: argparse.Namespace, df: pd.DataFrame, ds_id: str, clas
         rymin, rymax = int(row["ymin"]), int(row["ymax"])
         bbox = convert_to_yolo(rxmin, rymin, rxmax, rymax, rw, rh)
 
-        ann_str = f"{rclass:2d} {bbox[0]:.2f} {bbox[1]:.2f} {bbox[2]:.2f} {bbox[3]:.2f}\n"
-        if opt.verbose: print(f"- annotation for {fname}: >>> {ann_str}")
-        with open(f"{opt.root_dataset_dir}/labels/{ds_id}/{fname[:-4]}.txt", mode="a") as f:
+        ann_str = (
+            f"{rclass:2d} {bbox[0]:.2f} {bbox[1]:.2f} {bbox[2]:.2f} {bbox[3]:.2f}\n"
+        )
+        if opt.verbose:
+            print(f"- annotation for {fname}: >>> {ann_str}")
+        with open(
+            f"{opt.root_dataset_dir}/labels/{ds_id}/{fname[:-4]}.txt", mode="a"
+        ) as f:
             f.write(ann_str)
     print()
     return
 
-def copy_images(src_dir: Union[str,Path], dest_dir: Union[str,Path], fnames: List[str]) -> None:
+
+def copy_images(
+    src_dir: Union[str, Path], dest_dir: Union[str, Path], fnames: List[str]
+) -> None:
     """Copy images to new database location
 
     Parameters
     ----------
     src_dir : `str / Path`
         Source directory
-    
+
     dest_dir : `str / Path`
         Destionation directory
 
@@ -89,7 +99,10 @@ def copy_images(src_dir: Union[str,Path], dest_dir: Union[str,Path], fnames: Lis
         shutil.copyfile(f"{src_dir}/{fname}", f"{dest_dir}/{fname}")
     return
 
-def clean_dataframe(df: pd.DataFrame, image_directory: Union[str, Path]) -> pd.DataFrame:
+
+def clean_dataframe(
+    df: pd.DataFrame, image_directory: Union[str, Path]
+) -> pd.DataFrame:
     """Clean dataframe from images not present in the dataset
 
     Parameters
@@ -104,10 +117,13 @@ def clean_dataframe(df: pd.DataFrame, image_directory: Union[str, Path]) -> pd.D
     keys_to_drop = []
     for k, fname in enumerate(df["filename"]):
         if fname not in images_in_ds:
-            print(f"WARNING: {fname} not found in {image_directory}, will not be added to dataset")
+            print(
+                f"WARNING: {fname} not found in {image_directory}, will not be added to dataset"
+            )
             keys_to_drop.append(k)
     new_df = df.drop(keys_to_drop)
     return new_df
+
 
 def main(opt: argparse.Namespace) -> None:
     """Make YOLO-supported annotations
@@ -127,11 +143,14 @@ def main(opt: argparse.Namespace) -> None:
     if not Path(f"{__zipdir}").is_dir():
         __zipdir.mkdir(parents=True)
         with zipfile.ZipFile(f"{opt.zip_filename}", "r") as zf:
-            if opt.verbose: print(f"- extracting dataset into {__zipdir}...", end=" ")
+            if opt.verbose:
+                print(f"- extracting dataset into {__zipdir}...", end=" ")
             zf.extractall(f"{__zipdir}")
-            if opt.verbose: print("done")
+            if opt.verbose:
+                print("done")
     else:
-        if opt.verbose: print(f"- dataset already present in {__zipdir}")
+        if opt.verbose:
+            print(f"- dataset already present in {__zipdir}")
 
     # create root directories
     _root_dir = Path(f"{opt.root_dataset_dir}")
@@ -160,21 +179,27 @@ def main(opt: argparse.Namespace) -> None:
     for ds in ("train", "test"):
         # create directory structure
         for _dir in (_images, _labels):
-           _ds = _dir / ds
-           _ds.mkdir(parents=True, exist_ok=False)
-        
+            _ds = _dir / ds
+            _ds.mkdir(parents=True, exist_ok=False)
+
         # load train/test dataset
         ds_name = f"{__zipdir}/{ds}_labels.csv"
         df = pd.read_csv(filepath_or_buffer=ds_name)
 
         # clean dataset to remove entries with no matching image in the train/test directory
-        clean_df = clean_dataframe(df=df, image_directory=Path(__file__).parent / "temp" / f"{ds}".upper())
+        clean_df = clean_dataframe(
+            df=df, image_directory=Path(__file__).parent / "temp" / f"{ds}".upper()
+        )
 
         # make annotations
         annotate_dataset(opt=opt, df=clean_df, ds_id=ds, classes_dict=c2i)
 
         # copy files
-        copy_images(src_dir=Path(__file__).parent / "temp" / f"{ds}".upper(), dest_dir=_images / f"{ds}", fnames=clean_df["filename"])
+        copy_images(
+            src_dir=Path(__file__).parent / "temp" / f"{ds}".upper(),
+            dest_dir=_images / f"{ds}",
+            fnames=clean_df["filename"],
+        )
 
     # remove zipdir created
     shutil.rmtree(__zipdir)
@@ -185,14 +210,21 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--zip-filename", "-Z", type=str, help="Name of zip file with dataset",
+        "--zip-filename",
+        "-Z",
+        type=str,
+        help="Name of zip file with dataset",
     )
     parser.add_argument(
-            "--root-dataset-dir", type=str, help="Path to root directory where train & valid datasets with annotations are saved",
-            )
+        "--root-dataset-dir",
+        type=str,
+        help="Path to root directory where train & valid datasets with annotations are saved",
+    )
     parser.add_argument(
-            "--verbose", action="store_true", help="Verbose mode",
-            )
+        "--verbose",
+        action="store_true",
+        help="Verbose mode",
+    )
     opt = parser.parse_args()
 
     st = time.monotonic()
