@@ -11,7 +11,9 @@ from torch.utils.data import Dataset
 
 
 class PlantdocDataset(Dataset):
-    def __init__(self, fname: Union[str, Path], image_dir: Union[str, Path], transform=None) -> None:
+    def __init__(
+        self, fname: Union[str, Path], image_dir: Union[str, Path], transform=None
+    ) -> None:
         self.fname = fname
         self.image_dir = image_dir
         self.transform = transform
@@ -24,14 +26,14 @@ class PlantdocDataset(Dataset):
         img_name = Path(self.image_dir) / self.df.iloc[index, 0]
 
         # mask everything in dataframe that is not `img_name`
-        df_m = self.df[self.df["filename"] == self.df.iloc[index,0]]
+        df_m = self.df[self.df["filename"] == self.df.iloc[index, 0]]
 
         # get all bounding boxes in an image
         bboxes = []
         for row in df_m.iterrows():
-            bbox = [row[1]["xmin"],row[1]["ymin"],row[1]["xmax"],row[1]["ymax"]]
+            bbox = [row[1]["xmin"], row[1]["ymin"], row[1]["xmax"], row[1]["ymax"]]
             bboxes.append(bbox)
-        
+
         bboxes = np.array(bboxes, dtype=float).reshape(len(bboxes), 4)
         return img_name, bboxes
 
