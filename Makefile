@@ -20,5 +20,8 @@ env:
 lint:
 	ruff format src/*.py
 
-test:
-	python src/run.py --dataset-directory=data/plants/color --mode=Train
+run-yolo:
+	python src/yolo/run.py --channels=3 --num-classes=29 --mode=training \
+		--train-fname=data/plantdoc/train_labels.csv \
+		--image-dir=data/plantdoc/images/train \
+		--labels-dict=data/plantdoc/classes_ids.json
