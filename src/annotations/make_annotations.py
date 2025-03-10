@@ -5,9 +5,7 @@ as required by YOLO & detectron2 models
 
 import argparse
 import glob
-import json
 import shutil
-import sys
 import tempfile
 import time
 import zipfile
@@ -73,7 +71,6 @@ def annotate_dataset(
 
 def copy_images(
     src_dir: Union[str, Path], dest_dir: Union[str, Path], fnames: List[str],
-    verbose: bool = False,
 ) -> None:
     """Copy images to new database location
 
@@ -186,13 +183,15 @@ def main(opt: argparse.Namespace) -> None:
 
         # YAML file with dataset config
         yml_dict = {
-            "path": str(_root_dir),
+            "path": str(_root_dir.absolute()),
             "train": "images/train",
             "val": "images/val",
             "names": i2c,
         }
         with open(f"{_root_dir.parent}/plantdoc_dataset.yaml", "w") as f:
             yaml.dump(yml_dict, f)
+
+        return
 
         # repeat annotations for each dataset
         for ds in ("train", "test"):
