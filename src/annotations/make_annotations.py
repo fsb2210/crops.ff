@@ -3,16 +3,19 @@ Create annotations for each image and store them in a proper directory
 as required by YOLO & detectron2 models
 """
 
-import glob
 import argparse
+import glob
 import json
+import shutil
+import sys
+import tempfile
+import time
+import zipfile
 from pathlib import Path
 from typing import Dict, List, Tuple, Union
-import shutil
-import zipfile
-import time
 
 import pandas as pd
+import yaml
 
 
 def convert_to_yolo(
@@ -34,16 +37,8 @@ def convert_to_yolo(
     x_center /= image_width
     y_center /= image_height
     width /= image_width
-    height = image_height
+    height /= image_height
     return x_center, y_center, width, height
-
-
-def _get_categories(df: pd.DataFrame) -> Dict[str, int]:
-    """Create dictionary for class -> index equivalence"""
-    classes = df["class"]
-    keys = list(set(classes))
-    class2id = dict(zip((keys), range(len(keys))))
-    return class2id
 
 
 def annotate_dataset(
@@ -51,28 +46,25 @@ def annotate_dataset(
 ) -> None:
     """Annotate dataset and save annotations to new database"""
     # loop over elements in the datase.txtt
-    for k, fname in enumerate(df["filename"]):
+    for k, row in df.iterrows():
         if not opt.verbose:
-            print(f"\r- annotating {k}/{df.shape[0]}", end=" ")
+            print(f"\r  - Annotating {k+1}/{df.shape[0]}", end=" ")
 
-        row = df.iloc[k]
-        rclass = classes_dict[row["class"]]
-
+        rclass = row["class"]
+        rclassid = next((k for k, v in classes_dict.items() if v == rclass), None)
         rw, rh = int(row["width"]), int(row["height"])
-        if rw == 0 or rh == 0:
-            print(f"WARNING: found 0 dimension(s) in {fname}: w={rw:.2f} h={rh:.2f}")
-            continue
         rxmin, rxmax = int(row["xmin"]), int(row["xmax"])
         rymin, rymax = int(row["ymin"]), int(row["ymax"])
+
         bbox = convert_to_yolo(rxmin, rymin, rxmax, rymax, rw, rh)
 
         ann_str = (
-            f"{rclass:2d} {bbox[0]:.2f} {bbox[1]:.2f} {bbox[2]:.2f} {bbox[3]:.2f}\n"
+            f"{rclassid:2d} {bbox[0]:.2f} {bbox[1]:.2f} {bbox[2]:.2f} {bbox[3]:.2f}\n"
         )
         if opt.verbose:
-            print(f"- annotation for {fname}: >>> {ann_str}")
+            print(f"  - Annotation for {row['filename']}: >>> {ann_str}")
         with open(
-            f"{opt.root_dataset_dir}/labels/{ds_id}/{fname[:-4]}.txt", mode="a"
+            f"{opt.root_dataset_dir}/labels/{ds_id}/{row['filename'][:-4]}.txt", mode="a"
         ) as f:
             f.write(ann_str)
     print()
@@ -80,7 +72,8 @@ def annotate_dataset(
 
 
 def copy_images(
-    src_dir: Union[str, Path], dest_dir: Union[str, Path], fnames: List[str]
+    src_dir: Union[str, Path], dest_dir: Union[str, Path], fnames: List[str],
+    verbose: bool = False,
 ) -> None:
     """Copy images to new database location
 
@@ -95,13 +88,16 @@ def copy_images(
     fnames : `list`
         List of files to copy from src_dir to dest_dir
     """
-    for fname in fnames:
+    for k, fname in enumerate(fnames):
+        print(f"\r  - Copying images to dataset {k+1}/{len(fnames)}", end=" ")
         shutil.copyfile(f"{src_dir}/{fname}", f"{dest_dir}/{fname}")
+    print()
     return
 
 
 def clean_dataframe(
-    df: pd.DataFrame, image_directory: Union[str, Path]
+    df: pd.DataFrame, image_directory: Union[str, Path],
+    verbose: bool = False,
 ) -> pd.DataFrame:
     """Clean dataframe from images not present in the dataset
 
@@ -110,19 +106,42 @@ def clean_dataframe(
     df : `pd.DataFrame`
         Dataframe of the dataset
 
-    image_directory: `str / Path`
+    image_directory : `str / Path`
         Directory with images of the dataset
+
+    verbose : `bool`
+        Add verbosity to standard output
     """
+    if verbose: print("  - Cleaning dataframe from images not present in dataset and images with zero width or height")
     images_in_ds = glob.glob("*.*g", root_dir=image_directory)
-    keys_to_drop = []
-    for k, fname in enumerate(df["filename"]):
+    keys_to_drop, images_to_drop = [], []
+    for k, row in df.iterrows():
+        # aux vars
+        fname = row["filename"]
+        width, height = row["width"], row["height"]
+
         if fname not in images_in_ds:
-            print(
-                f"WARNING: {fname} not found in {image_directory}, will not be added to dataset"
-            )
+            if fname not in images_to_drop:
+                print(
+                    f"WARNING: {fname} not found in {image_directory}, will skip it"
+                )
             keys_to_drop.append(k)
+            images_to_drop.append(fname)
+
+        if width == 0 or height == 0:
+            if fname not in images_to_drop:
+                print(f"WARNING: found 0 dimension(s) in {fname}: w={width:.2f} h={height:.2f}. will skip it")
+            keys_to_drop.append(k)
+            images_to_drop.append(fname)
     new_df = df.drop(keys_to_drop)
+    new_df = new_df.reset_index(drop=True)
     return new_df
+
+def _get_dict_classes(fname: Union[str, Path]) -> Dict[int,str]:
+    _df = pd.read_csv(filepath_or_buffer=fname)
+    classes = list(set(_df["class"]))
+    i2c = {k: name for k, name in enumerate(classes)}
+    return i2c
 
 
 def main(opt: argparse.Namespace) -> None:
@@ -134,75 +153,70 @@ def main(opt: argparse.Namespace) -> None:
         Options from the command line
     """
 
+    if opt.verbose: print(f"Command-line arguments: {opt}")
+
     # first check: is zip file present?
     if not Path(opt.zip_filename).is_file():
         raise FileNotFoundError(f"zip file does not exist: {opt.zip_filename}")
 
-    # use hardcode path, not gonna reach end product
-    __zipdir = Path(__file__).parent / "temp"
-    if not Path(f"{__zipdir}").is_dir():
-        __zipdir.mkdir(parents=True)
+    # create temp directory using context manager & extract zipfile there
+    with tempfile.TemporaryDirectory() as __zipdir:
         with zipfile.ZipFile(f"{opt.zip_filename}", "r") as zf:
-            if opt.verbose:
-                print(f"- extracting dataset into {__zipdir}...", end=" ")
+            if opt.verbose: print(f"- Extracting dataset into {__zipdir}...", end=" ")
             zf.extractall(f"{__zipdir}")
-            if opt.verbose:
-                print("done")
-    else:
-        if opt.verbose:
-            print(f"- dataset already present in {__zipdir}")
+            if opt.verbose: print("done")
 
-    # create root directories
-    _root_dir = Path(f"{opt.root_dataset_dir}")
-    _root_dir.mkdir(parents=True, exist_ok=True)
-    _images = _root_dir / "images"
-    _labels = _root_dir / "labels"
+        # create root directories
+        _root_dir = Path(f"{opt.root_dataset_dir}")
+        _images = _root_dir / "images"
+        _labels = _root_dir / "labels"
+        _root_dir.mkdir(parents=True, exist_ok=False)
+        _images.mkdir(parents=True, exist_ok=False)
+        _labels.mkdir(parents=True, exist_ok=False)
+        for name in ("train", "test"):
+            dirname = _images / name
+            dirname.mkdir()
+            dirname = _labels / name
+            dirname.mkdir()
 
-    # from here on, assume __zipdir has entire dataset
-    # dictionary matching class names to int ids
-    __classes_ids = Path(__file__).parent / "temp" / "classes_ids.json"
-    if __classes_ids.is_file():
-        with open(__classes_ids, "r") as f:
-            c2i = json.load(f)
-    else:
-        _df = pd.read_csv(filepath_or_buffer=f"{__zipdir}/train_labels.csv")
-        c2i = _get_categories(_df)
-        del _df
-        with open(__classes_ids, "w") as f:
-            json.dump(c2i, f, indent=2)
+        # from here on, assume __zipdir has entire dataset
 
-    # copy classes -> id dict to root dataset directory
-    with open(f"{_root_dir}/classes_ids.json", "w") as f:
-        json.dump(c2i, f, indent=2)
+        # create dictionary map between indices and classes
+        i2c = _get_dict_classes(fname=f"{__zipdir}/train_labels.csv")
 
-    # repeat annotations for each dataset
-    for ds in ("train", "test"):
-        # create directory structure
-        for _dir in (_images, _labels):
-            _ds = _dir / ds
-            _ds.mkdir(parents=True, exist_ok=False)
+        # YAML file with dataset config
+        yml_dict = {
+            "path": str(_root_dir),
+            "train": "images/train",
+            "val": "images/val",
+            "names": i2c,
+        }
+        with open(f"{_root_dir.parent}/plantdoc_dataset.yaml", "w") as f:
+            yaml.dump(yml_dict, f)
 
-        # load train/test dataset
-        ds_name = f"{__zipdir}/{ds}_labels.csv"
-        df = pd.read_csv(filepath_or_buffer=ds_name)
+        # repeat annotations for each dataset
+        for ds in ("train", "test"):
+            if opt.verbose: print(f"- Processing {ds} dataset")
 
-        # clean dataset to remove entries with no matching image in the train/test directory
-        clean_df = clean_dataframe(
-            df=df, image_directory=Path(__file__).parent / "temp" / f"{ds}".upper()
-        )
+            # load train/test dataset
+            ds_name = f"{__zipdir}/{ds}_labels.csv"
+            df = pd.read_csv(filepath_or_buffer=ds_name)
 
-        # make annotations
-        annotate_dataset(opt=opt, df=clean_df, ds_id=ds, classes_dict=c2i)
+            # clean dataset to remove entries with no matching image in the train/test directory
+            clean_df = clean_dataframe(
+                df=df, image_directory=Path(__zipdir) / f"{ds}".upper(),
+                verbose=opt.verbose
+            )
 
-        # copy files
-        copy_images(
-            src_dir=Path(__file__).parent / "temp" / f"{ds}".upper(),
-            dest_dir=_images / f"{ds}",
-            fnames=clean_df["filename"],
-        )
+            # make annotations
+            annotate_dataset(opt=opt, df=clean_df, ds_id=ds, classes_dict=i2c)
 
-    # remove zipdir created
-    shutil.rmtree(__zipdir)
+            # copy files
+            copy_images(
+                src_dir=Path(__zipdir) / f"{ds}".upper(),
+                dest_dir=_images / f"{ds}",
+                fnames=list(clean_df["filename"]),
+            )
 
 
 if __name__ == "__main__":
