@@ -46,7 +46,7 @@ def annotate_dataset(
     # loop over elements in the datase.txtt
     for k, row in df.iterrows():
         if not opt.verbose:
-            print(f"\r  - Annotating {k+1}/{df.shape[0]}", end=" ")
+            print(f"\r  - Annotating {k + 1}/{df.shape[0]}", end=" ")
 
         rclass = row["class"]
         rclassid = next((k for k, v in classes_dict.items() if v == rclass), None)
@@ -62,7 +62,8 @@ def annotate_dataset(
         if opt.verbose:
             print(f"  - Annotation for {row['filename']}: >>> {ann_str}")
         with open(
-            f"{opt.root_dataset_dir}/labels/{ds_id}/{row['filename'][:-4]}.txt", mode="a"
+            f"{opt.root_dataset_dir}/labels/{ds_id}/{row['filename'][:-4]}.txt",
+            mode="a",
         ) as f:
             f.write(ann_str)
     print()
@@ -70,7 +71,9 @@ def annotate_dataset(
 
 
 def copy_images(
-    src_dir: Union[str, Path], dest_dir: Union[str, Path], fnames: List[str],
+    src_dir: Union[str, Path],
+    dest_dir: Union[str, Path],
+    fnames: List[str],
 ) -> None:
     """Copy images to new database location
 
@@ -86,14 +89,15 @@ def copy_images(
         List of files to copy from src_dir to dest_dir
     """
     for k, fname in enumerate(fnames):
-        print(f"\r  - Copying images to dataset {k+1}/{len(fnames)}", end=" ")
+        print(f"\r  - Copying images to dataset {k + 1}/{len(fnames)}", end=" ")
         shutil.copyfile(f"{src_dir}/{fname}", f"{dest_dir}/{fname}")
     print()
     return
 
 
 def clean_dataframe(
-    df: pd.DataFrame, image_directory: Union[str, Path],
+    df: pd.DataFrame,
+    image_directory: Union[str, Path],
     verbose: bool = False,
 ) -> pd.DataFrame:
     """Clean dataframe from images not present in the dataset
@@ -109,7 +113,10 @@ def clean_dataframe(
     verbose : `bool`
         Add verbosity to standard output
     """
-    if verbose: print("  - Cleaning dataframe from images not present in dataset and images with zero width or height")
+    if verbose:
+        print(
+            "  - Cleaning dataframe from images not present in dataset and images with zero width or height"
+        )
     images_in_ds = glob.glob("*.*g", root_dir=image_directory)
     keys_to_drop, images_to_drop = [], []
     for k, row in df.iterrows():
@@ -119,22 +126,23 @@ def clean_dataframe(
 
         if fname not in images_in_ds:
             if fname not in images_to_drop:
-                print(
-                    f"WARNING: {fname} not found in {image_directory}, will skip it"
-                )
+                print(f"WARNING: {fname} not found in {image_directory}, will skip it")
             keys_to_drop.append(k)
             images_to_drop.append(fname)
 
         if width == 0 or height == 0:
             if fname not in images_to_drop:
-                print(f"WARNING: found 0 dimension(s) in {fname}: w={width:.2f} h={height:.2f}. will skip it")
+                print(
+                    f"WARNING: found 0 dimension(s) in {fname}: w={width:.2f} h={height:.2f}. will skip it"
+                )
             keys_to_drop.append(k)
             images_to_drop.append(fname)
     new_df = df.drop(keys_to_drop)
     new_df = new_df.reset_index(drop=True)
     return new_df
 
-def _get_dict_classes(fname: Union[str, Path]) -> Dict[int,str]:
+
+def _get_dict_classes(fname: Union[str, Path]) -> Dict[int, str]:
     _df = pd.read_csv(filepath_or_buffer=fname)
     classes = list(set(_df["class"]))
     i2c = {k: name for k, name in enumerate(classes)}
@@ -150,7 +158,8 @@ def main(opt: argparse.Namespace) -> None:
         Options from the command line
     """
 
-    if opt.verbose: print(f"Command-line arguments: {opt}")
+    if opt.verbose:
+        print(f"Command-line arguments: {opt}")
 
     # first check: is zip file present?
     if not Path(opt.zip_filename).is_file():
@@ -159,9 +168,11 @@ def main(opt: argparse.Namespace) -> None:
     # create temp directory using context manager & extract zipfile there
     with tempfile.TemporaryDirectory() as __zipdir:
         with zipfile.ZipFile(f"{opt.zip_filename}", "r") as zf:
-            if opt.verbose: print(f"- Extracting dataset into {__zipdir}...", end=" ")
+            if opt.verbose:
+                print(f"- Extracting dataset into {__zipdir}...", end=" ")
             zf.extractall(f"{__zipdir}")
-            if opt.verbose: print("done")
+            if opt.verbose:
+                print("done")
 
         # create root directories
         _root_dir = Path(f"{opt.root_dataset_dir}")
@@ -170,7 +181,7 @@ def main(opt: argparse.Namespace) -> None:
         _root_dir.mkdir(parents=True, exist_ok=False)
         _images.mkdir(parents=True, exist_ok=False)
         _labels.mkdir(parents=True, exist_ok=False)
-        for name in ("train", "test"):
+        for name in ("train", "val"):
             dirname = _images / name
             dirname.mkdir()
             dirname = _labels / name
@@ -189,13 +200,12 @@ def main(opt: argparse.Namespace) -> None:
             "names": i2c,
         }
         with open(f"{_root_dir.parent}/plantdoc_dataset.yaml", "w") as f:
-            yaml.dump(yml_dict, f)
-
-        return
+            yaml.dump(yml_dict, f, sort_keys=False)
 
         # repeat annotations for each dataset
         for ds in ("train", "test"):
-            if opt.verbose: print(f"- Processing {ds} dataset")
+            if opt.verbose:
+                print(f"- Processing {ds} dataset")
 
             # load train/test dataset
             ds_name = f"{__zipdir}/{ds}_labels.csv"
@@ -203,17 +213,21 @@ def main(opt: argparse.Namespace) -> None:
 
             # clean dataset to remove entries with no matching image in the train/test directory
             clean_df = clean_dataframe(
-                df=df, image_directory=Path(__zipdir) / f"{ds}".upper(),
-                verbose=opt.verbose
+                df=df,
+                image_directory=Path(__zipdir) / f"{ds}".upper(),
+                verbose=opt.verbose,
             )
 
             # make annotations
-            annotate_dataset(opt=opt, df=clean_df, ds_id=ds, classes_dict=i2c)
+            ds_true = ds
+            if ds == "test":
+                ds_true = "val"
+            annotate_dataset(opt=opt, df=clean_df, ds_id=ds_true, classes_dict=i2c)
 
             # copy files
             copy_images(
                 src_dir=Path(__zipdir) / f"{ds}".upper(),
-                dest_dir=_images / f"{ds}",
+                dest_dir=_images / f"{ds_true}",
                 fnames=list(clean_df["filename"]),
             )
 
