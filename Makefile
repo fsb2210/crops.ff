@@ -33,5 +33,8 @@ annotations:
 run-yolo:
 	python src/yolo/run.py -C data/plantdoc_dataset.yaml --model models/yolo11s.pt
 
-inference:
-	python src/yolo/inference.py -I data/plantdoc/images/val/three-vibrant-leaves-bird-cherry-tree-13905898.jpg --model runs/detect/train/weights/last.pt
+inference-webcam:
+	python src/yolo/inference.py --model runs/detect/train/weights/last.pt --webcam
+
+inference-image:
+	python src/yolo/inference.py -I data/tomato-plant.jpg --model runs/detect/train/weights/last.pt
